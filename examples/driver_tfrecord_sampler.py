@@ -1,7 +1,7 @@
 import os
+from collections import Counter
 from pathlib import Path
 from typing import Callable, Optional
-from collections import Counter
 
 import tensorflow as tf
 from absl import logging
@@ -47,6 +47,9 @@ def TFRecordDatasetSampler(
         # shuffle shard order
         ds = ds.shuffle(total_shards)
 
+        # repeat shard order
+        ds = ds.repeat(count=num_repeat)
+
         # This is the tricky part, we are using the interleave function to
         # do the sampling as requested by the user. This is not the
         # standard use of the function or an obvious way to do it but
@@ -58,20 +61,22 @@ def TFRecordDatasetSampler(
             lambda x: tf.data.TFRecordDataset(
                 x,
                 compression_type=compression,
-            ),  # noqa
+            )
+            .shuffle(100)
+            .take(example_per_class),  # noqa
             cycle_length=cycle_length,
             block_length=example_per_class,
             num_parallel_calls=num_parallel_calls,
             deterministic=False,
         )
         ds = ds.map(deserialization_fn, num_parallel_calls=parallelism)
-        ds = ds.repeat(count=num_repeat)
         ds = ds.batch(batch_size)
         ds = ds.prefetch(prefetch_size)
+        print("Parallel calls:", num_parallel_calls)
+        print()
         return ds
 
 
-#%%
 tmpdir = Path("tfrecord_files")
 
 # create_data(tmpdir)
@@ -79,10 +84,16 @@ tmpdir = Path("tfrecord_files")
 sampler = TFRecordDatasetSampler(
     tmpdir,
     deserialization_fn=deserialization_fn,
+    shards_per_cycle=5,
     example_per_class=6,
+    async_cycle=True,
     batch_size=30,
+    num_repeat=-1,
 )
 
-it = iter(sampler)
-x, y = next(it)
-print(*Counter(x.numpy()).items(), sep="\n")
+for i, (x, y) in sampler.enumerate():
+    counts_x = Counter(x.numpy())
+    if not all(c == 6 for c in counts_x.values()):
+        print(i.numpy())
+        print(*counts_x.items(), sep="\n")
+        break
