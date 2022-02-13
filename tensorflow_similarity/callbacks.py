@@ -29,139 +29,6 @@ from .types import Tensor, FloatTensor, IntTensor
 from .utils import unpack_lookup_distances, unpack_lookup_labels
 
 
-class ClassificationEvaluator(Callback):
-    def __init__(
-        self,
-        queries: Tensor,
-        query_labels: Sequence[int],
-        targets: Tensor,
-        target_labels: Sequence[int],
-        known_classes: IntTensor,  # TODO: Make optional
-        distance: str = "cosine",
-        metrics: Sequence[Union[str, ClassificationMetric]] = (
-            "binary_accuracy",
-            "f1score",
-        ),
-        k: int = 1,
-        matcher: Union[str, ClassificationMatch] = "match_nearest",
-        distance_thresholds: Optional[FloatTensor] = None,
-        tb_logdir: str = None,
-    ):
-        """Creates the validation callbacks.
-
-        Args:
-            queries: Test examples that will be tested against the built index.
-
-            query_labels: Queries nearest neighbors expected labels.
-
-            targets: Examples that are indexed.
-
-            target_labels: Target examples labels.
-
-            known_classes: The set of classes seen during training.
-
-            distance: Distance function used to compute pairwise distance
-            between examples embeddings.
-
-            metrics: List of
-            'tf.similarity.classification_metrics.ClassificationMetric()` to
-            compute during the evaluation. Defaults to ['binary_accuracy',
-            'f1score'].
-
-            k: The number of nearest neighbors to return for each query.
-
-            matcher: {'match_nearest', 'match_majority_vote'} or
-            ClassificationMatch object. Defines the classification matching,
-            e.g., match_nearest will count a True Positive if the query_label
-            is equal to the label of the nearest neighbor and the distance is
-            less than or equal to the distance threshold.
-
-            distance_thresholds: A 1D tensor denoting the distances points at
-            which we compute the metrics. If None, distance_thresholds is set to
-            tf.constant([math.inf])
-
-            tb_logdir: Where to write TensorBoard logs. Defaults to None.
-        """
-
-        if not tf.is_tensor(query_labels):
-            query_labels = tf.convert_to_tensor(np.array(query_labels))
-
-        if not tf.is_tensor(target_labels):
-            target_labels = tf.convert_to_tensor(np.array(target_labels))
-
-        if not tf.is_tensor(known_classes):
-            known_classes = tf.convert_to_tensor(np.array(known_classes))
-
-        query_labels = tf.cast(query_labels, dtype="int32")
-        target_labels = tf.cast(target_labels, dtype="int32")
-        known_classes = tf.cast(known_classes, dtype="int32")
-
-        ######
-        # Create separate validation sets for the known and unknown classes
-        known_classes = tf.cast(known_classes, dtype="int32")
-        known_classes = tf.reshape(known_classes, (-1))
-
-        # Use broadcasting to do a y X known_classes equality check. By adding
-        # a dim to the start of known_classes and a dim to the end of y, this
-        # essentially checks `for ck in known_classes: for cy in y: ck == cy`.
-        # We then reduce_any to find all rows in y that match at least one
-        # class in known_classes.
-        # See https://numpy.org/doc/stable/user/basics.broadcasting.html
-        broadcast_classes = tf.expand_dims(known_classes, axis=0)
-        broadcast_labels = tf.expand_dims(query_labels, axis=-1)
-        known_mask = tf.math.reduce_any(broadcast_classes == broadcast_labels, axis=1)
-        known_idxs = tf.squeeze(tf.where(known_mask))
-        unknown_idxs = tf.squeeze(tf.where(~known_mask))
-
-        with tf.device("/cpu:0"):
-            self.queries_known = tf.gather(queries, known_idxs)
-            self.query_labels_known = tf.gather(query_labels, known_idxs)
-            self.queries_unknown = tf.gather(queries, indices=unknown_idxs)
-            self.query_labels_unknown = tf.gather(query_labels, indices=unknown_idxs)
-
-            if tf.rank(self.queries_known) == 1:
-                self.queries_known = tf.expand_dims(self.queries_known, axis=0)
-                self.query_labels_known = tf.expand_dims(
-                    self.query_labels_known, axis=0
-                )
-            if tf.rank(self.queries_unknown) == 1:
-                self.queries_unknown = tf.expand_dims(self.queries_unknown, axis=0)
-                self.query_labels_unknown = tf.expand_dims(
-                    self.query_labels_unknown, axis=0
-                )
-        ######
-
-        if tb_logdir is not None:
-            tb_logdir = str(Path(tb_logdir) / "index/")
-            self.tb_writer = tf.summary.create_file_writer(tb_logdir)
-            print("TensorBoard logging enable in %s" % tb_logdir)
-        else:
-            self.tb_writer = None
-
-        if distance_thresholds is None:
-            distance_thresholds = tf.constant([math.inf])
-
-        self.evaluator = MemoryEvaluator()
-
-        self.queries = queries
-        self.query_labels = query_labels
-        self.targets = targets
-        self.target_labels = target_labels
-        self.known_classes = known_classes
-
-        self.distance = distance
-        # typing requires this weird formulation of creating a new list
-        self.metrics = List[ClassificationMetric] = [
-            make_classification_metric(m) for m in metrics
-        ]
-        self.k = k
-        self.matcher = matcher
-        self.distance_thresholds = distance_thresholds
-
-        self.tb_logdir = tb_logdir
-
-
-
 class EvalCallback(Callback):
     """Epoch end evaluation callback that build a test index and evaluate
     model performance on it.
@@ -225,7 +92,7 @@ class EvalCallback(Callback):
         self.queries = queries
         if not tf.is_tensor(query_labels):
             query_labels = tf.convert_to_tensor(np.array(query_labels))
-        self.query_labels: IntTensor = tf.cast(query_labels, dtype="int32")
+        self.query_labels: IntTensor = tf.cast(query_labels, dtype='int32')
         self.targets = targets
         self.target_labels = target_labels
         self.distance = distance
@@ -385,7 +252,7 @@ class SplitValidationLoss(Callback):
 
         if not tf.is_tensor(query_labels):
             query_labels = tf.convert_to_tensor(np.array(query_labels))
-        query_labels = tf.cast(query_labels, dtype="int32")
+        query_labels = tf.cast(query_labels, dtype='int32')
 
         # Create separate validation sets for the known and unknown classes
         known_classes = tf.cast(known_classes, dtype="int32")
@@ -399,13 +266,17 @@ class SplitValidationLoss(Callback):
         # See https://numpy.org/doc/stable/user/basics.broadcasting.html
         broadcast_classes = tf.expand_dims(known_classes, axis=0)
         broadcast_labels = tf.expand_dims(query_labels, axis=-1)
-        known_mask = tf.math.reduce_any(broadcast_classes == broadcast_labels, axis=1)
+        known_mask = tf.math.reduce_any(
+            broadcast_classes == broadcast_labels, axis=1
+        )
         known_idxs = tf.squeeze(tf.where(known_mask))
         unknown_idxs = tf.squeeze(tf.where(~known_mask))
 
         with tf.device("/cpu:0"):
             self.queries_known = tf.gather(queries, indices=known_idxs)
-            self.query_labels_known = tf.gather(query_labels, indices=known_idxs)
+            self.query_labels_known = tf.gather(
+                query_labels, indices=known_idxs
+            )
             # Expand to 2D if we only have a single example
             if tf.rank(self.queries_known) == 1:
                 self.queries_known = tf.expand_dims(self.queries_known, axis=0)
@@ -414,10 +285,14 @@ class SplitValidationLoss(Callback):
                 )
 
             self.queries_unknown = tf.gather(queries, indices=unknown_idxs)
-            self.query_labels_unknown = tf.gather(query_labels, indices=unknown_idxs)
+            self.query_labels_unknown = tf.gather(
+                query_labels, indices=unknown_idxs
+            )
             # Expand to 2D if we only have a single example
             if tf.rank(self.queries_unknown) == 1:
-                self.queries_unknown = tf.expand_dims(self.queries_unknown, axis=0)
+                self.queries_unknown = tf.expand_dims(
+                    self.queries_unknown, axis=0
+                )
                 self.query_labels_unknown = tf.expand_dims(
                     self.query_labels_unknown, axis=0
                 )
